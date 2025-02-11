@@ -1,0 +1,272 @@
+##===================================================================================##
+##                            PersistentVolume for Kafka                             ##
+## Purpose:                                                                          ##
+## --------                                                                          ##
+## This manifest defines a PersistentVolume (PV) to provide storage for Kafka data.  ##
+## The PV is bound to a PersistentVolumeClaim (PVC) to ensure the Kafka StatefulSet  ##
+## pods have access to the required storage. The storage is provisioned through a    ##
+## hostPath, specifying a path on the host machine.                                  ##
+##                                                                                   ##
+## Key Configurations:                                                               ##
+## ------------------                                                                ##
+## - capacity: Specifies the amount of storage (30Gi) available for Kafka data.      ##
+## - accessModes: 'ReadWriteOnce' ensures that only a single node can access the PV. ##
+## - persistentVolumeReclaimPolicy: Retain ensures that the volume is retained after ##
+##   the PVC is deleted, allowing for manual cleanup.                                ##
+## - hostPath: Defines the storage path on the host machine where Kafka data is      ##
+##   stored. The data path is set to '/data/cp-kafka/data'.                          ##
+##===================================================================================##
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kafka-pv
+  namespace: streaming
+spec:
+  # Defines the amount of storage available for Kafka
+  capacity:
+    storage: 30Gi
+  # Specifies that the PV can only be accessed by a single node
+  accessModes:
+    - ReadWriteOnce
+  # Defines the policy for the PV after the PVC is deleted; 'Retain' keeps the volume
+  persistentVolumeReclaimPolicy: Retain
+  # Specifies the host path where Kafka data will be stored
+  hostPath:
+    path: /data/cp-kafka/data
+
+---
+
+##======================================================================================##
+##                           PersistentVolumeClaim for Kafka                            ##
+## Purpose:                                                                             ##
+## --------                                                                             ##
+## This manifest defines a PersistentVolumeClaim (PVC) to request storage from a        ##
+## PersistentVolume (PV) for Kafka data. It is bound to the 'kafka-pv' PersistentVolume ##
+## created above to provide the necessary storage for the Kafka StatefulSet pods.       ##
+##                                                                                      ##
+## Key Configurations:                                                                  ##
+## ------------------                                                                   ##
+## - accessModes: 'ReadWriteOnce' specifies that only one node can access the volume    ##
+## - resources.requests.storage: Requests 30Gi of storage from the PV                   ##
+##======================================================================================##
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  # Name of the PersistentVolumeClaim
+  name: kafka-pvc
+
+  # Specifies the namespace where the PVC will be created
+  namespace: streaming
+
+spec:
+
+  # Defines the access modes for the claim, requesting read/write access for one node
+  accessModes:
+    - ReadWriteOnce
+
+  # Specifies the storage amount requested by the claim
+  resources:
+    requests:
+      storage: 30Gi
+---
+
+##===================================================================================##
+##                         ConfigMap for Kafka Configuration                         ##
+## Purpose:                                                                          ##
+## --------                                                                          ##
+## This ConfigMap provides the configuration settings for Kafka, including broker    ##
+## roles, quorum, listener configurations, and log directory settings. These values  ##
+## are essential for proper Kafka operation and are used by the Kafka pods during    ##
+## runtime.                                                                          ##
+##                                                                                   ##
+## Key Configurations:                                                               ##
+## ------------------                                                                ##
+## - KAFKA_PROCESS_ROLES: Defines the roles assigned to the Kafka instance, such as  ##
+##   broker and controller.                                                          ##
+## - CLUSTER_ID: Unique identifier for the Kafka cluster.                            ##
+## - KAFKA_CONTROLLER_QUORUM_VOTERS: Defines the Kafka nodes that participate in the ##
+##   controller quorum for leadership elections.                                     ##
+## - KAFKA_LISTENERS: Specifies the listeners for Kafka, including PLAINTEXT and     ##
+##   CONTROLLER listeners on different ports.                                        ##
+## - KAFKA_LOG_DIRS: Defines the directory where Kafka stores its log files.         ##
+##===================================================================================##
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-config
+  namespace: streaming
+data:
+  # Kafka instance roles; this defines the node's roles as broker and controller
+  KAFKA_PROCESS_ROLES: 'broker,controller'
+
+  # Unique identifier for the Kafka cluster
+  CLUSTER_ID: '1984e4f7-7640-429f-8a5c-517e944fe087'
+
+  # Kafka controller quorum configuration; defines nodes in the quorum for leadership
+  KAFKA_CONTROLLER_QUORUM_VOTERS: '0@kafka-0.kafka.streaming.svc.cluster.local:9093' #,1@kafka-1.kafka.streaming.svc.cluster.local:9093,2@kafka-2.kafka.streaming.svc.cluster.local:9093'
+
+  # Defines Kafka listeners for different types of communication (PLAINTEXT, CONTROLLER)
+  KAFKA_LISTENERS: 'PLAINTEXT://:9092,CONTROLLER://:9093'
+
+  # Maps listener types to their security protocols
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT'
+
+  # Specifies the listener for inter-broker communication
+  KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+
+  # Disables auto-creation of Kafka topics
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+
+  # Configures replication factors for system topics
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '3'
+
+  # Configures replication factors for the transaction state log
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '3'
+
+  # Configures the minimum ISR (in-sync replicas) for transactions
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '2'
+
+  # Specifies the directory where Kafka stores its log data
+  KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+
+  # Specifies the minimum number of in-sync replicas for Kafka partitions
+  KAFKA_MIN_INSYNC_REPLICAS: '2'
+
+  # Disables Confluent support metrics
+  KAFKA_CONFLUENT_SUPPORT_METRICS_ENABLE: 'false'
+
+  # Defines the listener used for Kafka controller communication
+  KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+
+---
+
+##===================================================================================##
+##                               StatefulSet for Kafka                               ##
+## Purpose:                                                                          ##
+## --------                                                                          ##
+## This manifest defines a StatefulSet to manage the Kafka cluster. The StatefulSet  ##
+## ensures that each Kafka pod has a stable identity (hostname) and persistent       ##
+## storage. The pods are scheduled with persistent storage backed by the PVC created ##
+## above. The configuration settings for each Kafka instance are provided through    ##
+## the Kafka ConfigMap.                                                              ##
+##                                                                                   ##
+## Key Configurations:                                                               ##
+## ------------------                                                                ##
+## - serviceName: Used to create a headless service that gives stable network IDs to ##
+##   the Kafka pods.                                                                 ##
+## - replicas: Defines the number of Kafka replicas in the StatefulSet.              ##
+## - selector: Ensures that the StatefulSet only manages Kafka pods with matching    ##
+##   labels.                                                                         ##
+## - containers: Defines the Kafka container configuration, including the image and  ##
+##   ports used. The environment variables and the Kafka startup command are also    ##
+##   specified.                                                                      ##
+## - volumeMounts: Defines the mount for Kafka's persistent data directory.          ##
+##===================================================================================##
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: streaming
+  labels:
+    service: kafka
+spec:
+  # Creates a headless service with stable network IDs for Kafka pods
+  serviceName: kafka
+  # Defines the number of replicas for the Kafka StatefulSet
+  replicas: 1
+  # Specifies the label selector to match the Kafka pods
+  selector:
+    matchLabels:
+      service: kafka
+  template:
+    metadata:
+      labels:
+        service: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: 'confluentinc/cp-kafka:latest'
+          imagePullPolicy: IfNotPresent
+          # Command executed when starting the Kafka container
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Extract pod ordinal from hostname
+              export KAFKA_NODE_ID=${HOSTNAME##*-}
+              export KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-${KAFKA_NODE_ID}.kafka.streaming.svc.cluster.local:9092
+              exec /etc/confluent/docker/run
+
+          # Define the ports for Kafka listeners
+          ports:
+            - containerPort: 9092
+            - containerPort: 9093
+
+          # Reference Kafka configuration from the ConfigMap
+          envFrom:
+            - configMapRef:
+                name: kafka-config
+
+          volumeMounts:
+            - mountPath: /var/lib/kafka/
+              name: kafka-data
+
+      securityContext:
+        fsGroup: 1000
+      enableServiceLinks: false
+      hostname: kafka
+      restartPolicy: Always
+
+      # Defines the volume used for persistent data storage
+      volumes:
+        - name: kafka-data
+          persistentVolumeClaim:
+            claimName: kafka-pvc
+
+---
+
+##=====================================================================================##
+##                                  Service for Kafka                                  ##
+## Purpose:                                                                            ##
+## --------                                                                            ##
+## This manifest defines a Service to expose Kafka to other services within the        ##
+## Kubernetes cluster. The service exposes internal Kafka ports, along with an         ##
+## external port for access outside the cluster.                                       ##
+##                                                                                     ##
+## Key Configurations:                                                                 ##
+## ------------------                                                                  ##
+## - clusterIP: None makes this a headless service, providing direct DNS resolution    ##
+##   for Kafka pods.                                                                   ##
+## - selector: Selects the Kafka pods based on the 'service: kafka' label.             ##
+## - ports: Defines three ports, one internal (9092), one for controller communication ##
+##   (9093), and an external port (30092) for Kafka access.                            ##
+##=====================================================================================##
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: streaming
+  labels:
+    service: kafka
+spec:
+  # Makes this a headless service, meaning direct DNS resolution for pods
+  clusterIP: None
+  # Selects the Kafka pods using the 'service: kafka' label
+  selector:
+    service: kafka
+  # Defines the ports for Kafka listeners and external access
+  ports:
+    - name: internal
+      port: 9092
+      targetPort: 9092
+    - name: controller
+      port: 9093
+      targetPort: 9093
+    - name: external
+      port: 30092
+      targetPort: 9092

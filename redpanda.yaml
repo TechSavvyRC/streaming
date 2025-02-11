@@ -1,0 +1,205 @@
+##======================================================================================##
+##                              Redpanda Console ConfigMap                              ##
+##                                                                                      ##
+## Purpose:                                                                             ##
+## --------                                                                             ##
+## This ConfigMap provides configuration settings for the Redpanda Console. It          ##
+## includes Kafka connection settings, console server settings, topic configuration,    ##
+## and schema registry options.                                                         ##
+##                                                                                      ##
+## Usage:                                                                               ##
+## ------                                                                               ##
+## - Use this ConfigMap to supply environment variables to the Redpanda Console         ##
+##   Deployment.                                                                        ##
+## - Adjust the values as needed to configure connectivity and behavior of the console. ##
+##======================================================================================##
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  # Name of the ConfigMap for Redpanda Console settings.
+  name: redpanda-config
+  # Namespace where the ConfigMap is created.
+  namespace: streaming
+data:
+  # Specifies the Kafka brokers for the console to connect to.
+  KAFKA_BROKERS: "kafka.streaming.svc.cluster.local:9092"
+  # Enables or disables TLS for Kafka connections. "false" means TLS is not enabled.
+  KAFKA_TLS_ENABLED: "false"
+  # Enables or disables SASL (authentication) for Kafka. "false" indicates no authentication.
+  KAFKA_SASL_ENABLED: "false"  # Changed to false since Kafka isn't using authentication
+  # File path for the Redpanda Console configuration file (leave empty if not used).
+  REDPANDA_CONSOLE_CONFIG_FILEPATH: ""
+  # Address and port on which the Redpanda Console will listen.
+  REDPANDA_CONSOLE_LISTEN_ADDRESS: "0.0.0.0:8080"
+  # Sets the server mode for the console. "proxy" mode means it acts as a reverse proxy.
+  REDPANDA_CONSOLE_SERVER_MODE: "proxy"
+  # Enables topic documentation features in the console. "true" enables the feature.
+  REDPANDA_CONSOLE_TOPIC_DOCUMENTATION_ENABLED: "true"
+  # Enables topic deletion from the console. "false" is a safer default to prevent accidental deletion.
+  REDPANDA_CONSOLE_TOPIC_DELETE_ENABLED: "false"
+  # Enables or disables the schema registry functionality. "false" means it is disabled.
+  SCHEMA_REGISTRY_ENABLED: "false"
+
+---
+
+##=======================================================================================##
+##                              Redpanda Console Deployment                              ##
+##                                                                                       ##
+## Purpose:                                                                              ##
+## --------                                                                              ##
+## This Deployment manages the Redpanda Console application, which provides a UI         ##
+## for monitoring and managing Kafka topics. The Deployment uses the configuration       ##
+## settings from the Redpanda ConfigMap and sets up probes to ensure application health. ##
+##                                                                                       ##
+## Usage:                                                                                ##
+## ------                                                                                ##
+## - The Deployment creates a pod running the Redpanda Console container.                ##
+## - It includes readiness and liveness probes to monitor the health of the application. ##
+##=======================================================================================##
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # Name of the Deployment for the Redpanda Console.
+  name: redpanda-console
+  # Namespace where the Deployment will run.
+  namespace: streaming
+  labels:
+    # Label to identify the Redpanda Console application.
+    app: redpanda-console
+spec:
+  # Number of pod replicas to run.
+  replicas: 1
+  selector:
+    matchLabels:
+      # Selector to match pods with the Redpanda Console label.
+      app: redpanda-console
+  template:
+    metadata:
+      labels:
+        # Labels assigned to the pod for identification.
+        app: redpanda-console
+    spec:
+      containers:
+      # Name of the container running the Redpanda Console.
+      - name: redpanda-console
+        # Docker image used for the Redpanda Console.
+        image: redpandadata/console:latest
+
+        ports:
+          # Port inside the container where the console listens for HTTP traffic.
+          - containerPort: 8080
+            # Name assigned to this port configuration.
+            name: http
+
+        # Load environment variables from the ConfigMap named redpanda-config.
+        envFrom:
+          # Name of the ConfigMap providing environment variables.
+          - configMapRef:
+              name: redpanda-config
+
+        readinessProbe:
+          httpGet:
+            # HTTP path used to check the readiness of the container.
+            path: /health
+            # Port used for the readiness probe.
+            port: 8080
+          # Delay before the readiness probe is initiated.
+          initialDelaySeconds: 10
+          # Interval between readiness probe checks.
+          periodSeconds: 10
+
+        livenessProbe:
+          httpGet:
+            # HTTP path used to check the liveness of the container.
+            path: /health
+            # Port used for the liveness probe.
+            port: 8080
+          # Delay before the liveness probe is initiated.
+          initialDelaySeconds: 20
+          # Interval between liveness probe checks.
+          periodSeconds: 15
+
+---
+
+##===================================================================================##
+##                             Redpanda Console Service                              ##
+## Purpose:                                                                          ##
+## --------                                                                          ##
+## This Service exposes the Redpanda Console application within the Kubernetes       ##
+## cluster, enabling network access to the console using a stable DNS name and port. ##
+##                                                                                   ##
+## Usage:                                                                            ##
+## ------                                                                            ##
+## - The Service routes traffic to the Redpanda Console pods based on the specified  ##
+##   label selectors.                                                                ##
+## - It defines the ports that are exposed to allow HTTP access to the console.      ##
+##===================================================================================##
+
+apiVersion: v1
+kind: Service
+metadata:
+  # Name of the Service for the Redpanda Console.
+  name: redpanda-console
+  # Namespace where the Service is created.
+  namespace: streaming
+spec:
+  selector:
+    # Selects pods with the label 'app: redpanda-console' to route traffic.
+    app: redpanda-console
+  ports:
+    # Protocol used for the Service communication.
+    - protocol: TCP
+      # Port on which the Service is exposed.
+      port: 8080
+      # Port on the pod where the traffic is directed.
+      targetPort: 8080
+      # Name assigned to this port configuration.
+      name: http
+
+---
+
+##===================================================================================##
+##                             Redpanda Console Ingress                              ##
+## Purpose:                                                                          ##
+## --------                                                                          ##
+## This Ingress resource manages external access to the Redpanda Console. It routes  ##
+## HTTP traffic from outside the cluster to the console Service based on the defined ##
+## hostname and path. It also includes an annotation to rewrite the URL path.        ##
+##                                                                                   ##
+## Usage:                                                                            ##
+## ------                                                                            ##
+## - The Ingress routes external requests to the Redpanda Console Service using the  ##
+##   hostname redpanda.marvel.com.                                                   ##
+## - The rewrite-target annotation ensures that the URL is correctly mapped to the   ##
+##   Service backend.                                                                ##
+##===================================================================================##
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  # Name of the Ingress resource for the Redpanda Console.
+  name: redpanda-console-ingress
+  # Namespace where the Ingress is created.
+  namespace: streaming
+  annotations:
+    # Rewrites the target URL to root ('/') when routing requests through the Ingress.
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  # Hostname that the Ingress will respond to.
+  - host: redpanda.marvel.com
+    http:
+      paths:
+      # URL path to match for routing requests.
+      - path: /
+        # Type of path matching; Prefix matches any request that starts with '/'.
+        pathType: Prefix
+        backend:
+          service:
+            # Name of the Service that handles the traffic.
+            name: redpanda-console
+            port:
+              # Port number on which the Service listens.
+              number: 8080
